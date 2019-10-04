@@ -71,8 +71,8 @@ pub fn main() {
 
     let (vs_code, fs_code) =
     (
-        include_bytes!("shader/triangle_150_core.glslv").to_vec(),
-        include_bytes!("shader/triangle_150_core.glslf").to_vec(),
+        include_bytes!("shader/150_core.glslv").to_vec(),
+        include_bytes!("shader/150_core.glslf").to_vec(),
     );
 
     let context = glutin::ContextBuilder::new()
