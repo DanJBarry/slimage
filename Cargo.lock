@@ -788,6 +788,7 @@ name = "slimage"
 version = "0.1.0"
 dependencies = [
  "gfx 0.18.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gfx_device_gl 0.16.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "gfx_window_glutin 0.31.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "glutin 0.21.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "image 0.22.3 (registry+https://github.com/rust-lang/crates.io-index)",
