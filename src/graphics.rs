@@ -158,6 +158,37 @@ pub fn init(receiver: Receiver<RgbaImage>, sender: Sender<DecoderMessage>) {
     let (mut events_loop, mut graphics) = setup(&receiver, &sender);
     let mut running = true;
     while running {
+        if let Ok(image) = receiver.try_recv() {
+            let dimensions = image.dimensions();
+            graphics.kind = gfx::texture::Kind::D2(
+                dimensions.0.try_into().unwrap(),
+                dimensions.1.try_into().unwrap(),
+                gfx::texture::AaMode::Single,
+            );
+            let (_, view) = graphics
+                .factory
+                .create_texture_immutable_u8::<ColorFormat>(
+                    graphics.kind,
+                    gfx::texture::Mipmap::Provided,
+                    &[&image],
+                )
+                .expect("Failed to create image texture");
+            graphics.pipe_data.tex.0 = view;
+        }
+
+        // draw a frame
+        graphics.encoder.clear(&graphics.pipe_data.out, CLEAR_COLOR);
+        graphics
+            .encoder
+            .update_buffer(&graphics.pipe_data.transform, &[TRANSFORM], 0)
+            .expect("Failed to update buffer");
+        graphics
+            .encoder
+            .draw(&graphics.slice, &graphics.pipe_state, &graphics.pipe_data);
+        graphics.encoder.flush(&mut graphics.device);
+        graphics.window_ctx.swap_buffers().unwrap();
+        graphics.device.cleanup();
+
         events_loop.poll_events(|event| {
             if let Event::WindowEvent { event, .. } = event {
                 match event {
@@ -215,36 +246,5 @@ pub fn init(receiver: Receiver<RgbaImage>, sender: Sender<DecoderMessage>) {
                 }
             }
         });
-
-        if let Ok(image) = receiver.try_recv() {
-            let dimensions = image.dimensions();
-            graphics.kind = gfx::texture::Kind::D2(
-                dimensions.0.try_into().unwrap(),
-                dimensions.1.try_into().unwrap(),
-                gfx::texture::AaMode::Single,
-            );
-            let (_, view) = graphics
-                .factory
-                .create_texture_immutable_u8::<ColorFormat>(
-                    graphics.kind,
-                    gfx::texture::Mipmap::Provided,
-                    &[&image],
-                )
-                .expect("Failed to create image texture");
-            graphics.pipe_data.tex.0 = view;
-        }
-
-        // draw a frame
-        graphics.encoder.clear(&graphics.pipe_data.out, CLEAR_COLOR);
-        graphics
-            .encoder
-            .update_buffer(&graphics.pipe_data.transform, &[TRANSFORM], 0)
-            .expect("Failed to update buffer");
-        graphics
-            .encoder
-            .draw(&graphics.slice, &graphics.pipe_state, &graphics.pipe_data);
-        graphics.encoder.flush(&mut graphics.device);
-        graphics.window_ctx.swap_buffers().unwrap();
-        graphics.device.cleanup();
     }
 }
