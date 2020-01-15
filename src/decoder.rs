@@ -4,7 +4,6 @@ extern crate image;
 
 use std::{
     ffi::OsString,
-    path::Path,
     sync::mpsc::{Receiver, Sender},
 };
 
@@ -46,7 +45,7 @@ impl Decoder {
     }
 
     fn open(&mut self, path: OsString) {
-        let result = image::open(Path::new(&path)).expect("Failed to open image");
+        let result = image::open(path).expect("Failed to open image");
         self.sender
             .send(result.to_rgba())
             .expect("Failed to send data to renderer");
