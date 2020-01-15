@@ -73,14 +73,32 @@ const TRANSFORM: Transform = Transform {
 
 const CLEAR_COLOR: [f32; 4] = [0.1, 0.2, 0.3, 1.0];
 
-pub fn init(receiver: Receiver<RgbaImage>, sender: Sender<DecoderMessage>) {
+struct Graphics {
+    window_ctx: glutin::ContextWrapper<glutin::PossiblyCurrent, glutin::Window>,
+    pipe_data: pipe::Data<gfx_device_gl::Resources>,
+    depth: gfx::handle::DepthStencilView<
+        gfx_device_gl::Resources,
+        (gfx::format::D24_S8, gfx::format::Unorm),
+    >,
+    kind: gfx::texture::Kind,
+    factory: gfx_device_gl::Factory,
+    encoder: gfx::Encoder<gfx_device_gl::Resources, gfx_device_gl::CommandBuffer>,
+    pipe_state: gfx::PipelineState<gfx_device_gl::Resources, pipe::Meta>,
+    slice: gfx::Slice<gfx_device_gl::Resources>,
+    device: gfx_device_gl::Device,
+}
+
+fn setup(
+    receiver: &Receiver<RgbaImage>,
+    sender: &Sender<DecoderMessage>,
+) -> (glutin::EventsLoop, Graphics) {
     sender
         .send(DecoderMessage::Open(
             args_os().nth(1).expect("Failed to parse arguments"),
         ))
         .expect("Failed to send message to decoder");
 
-    let mut events_loop = glutin::EventsLoop::new();
+    let events_loop = glutin::EventsLoop::new();
     let window_config = glutin::WindowBuilder::new()
         .with_title("slimage".to_string())
         .with_dimensions((500, 500).into());
@@ -91,12 +109,12 @@ pub fn init(receiver: Receiver<RgbaImage>, sender: Sender<DecoderMessage>) {
     let context = glutin::ContextBuilder::new()
         .with_gl(glutin::GlRequest::Latest)
         .with_vsync(true);
-    let (window_ctx, mut device, mut factory, main_color, mut main_depth) =
+    let (window_ctx, device, mut factory, main_color, depth) =
         gfx_window_glutin::init::<ColorFormat, DepthFormat>(window_config, context, &events_loop)
             .expect("Failed to create window");
-    let mut encoder = gfx::Encoder::from(factory.create_command_buffer());
+    let encoder = gfx::Encoder::from(factory.create_command_buffer());
     let sampler = factory.create_sampler_linear();
-    let pso = factory
+    let pipe_state = factory
         .create_pipeline_simple(&vs_code, &fs_code, pipe::new())
         .unwrap();
     let (vertex_buffer, slice) = factory.create_vertex_buffer_with_slice(&SQUARE, INDICES);
@@ -105,8 +123,8 @@ pub fn init(receiver: Receiver<RgbaImage>, sender: Sender<DecoderMessage>) {
     let image = receiver
         .recv()
         .expect("Failed to receive data from decoder");
-    let mut dimensions = image.dimensions();
-    let mut kind = gfx::texture::Kind::D2(
+    let dimensions = image.dimensions();
+    let kind = gfx::texture::Kind::D2(
         dimensions.0.try_into().unwrap(),
         dimensions.1.try_into().unwrap(),
         gfx::texture::AaMode::Single,
@@ -114,13 +132,30 @@ pub fn init(receiver: Receiver<RgbaImage>, sender: Sender<DecoderMessage>) {
     let (_, view) = factory
         .create_texture_immutable_u8::<ColorFormat>(kind, gfx::texture::Mipmap::Provided, &[&image])
         .expect("Failed to create image texture");
-    let mut data = pipe::Data {
+    let pipe_data = pipe::Data {
         vbuf: vertex_buffer,
         tex: (view, sampler),
         transform: transform_buffer,
         out: main_color,
     };
+    (
+        events_loop,
+        Graphics {
+            window_ctx,
+            pipe_data,
+            depth,
+            kind,
+            factory,
+            encoder,
+            pipe_state,
+            slice,
+            device,
+        },
+    )
+}
 
+pub fn init(receiver: Receiver<RgbaImage>, sender: Sender<DecoderMessage>) {
+    let (mut events_loop, mut graphics) = setup(&receiver, &sender);
     let mut running = true;
     while running {
         events_loop.poll_events(|event| {
@@ -167,11 +202,13 @@ pub fn init(receiver: Receiver<RgbaImage>, sender: Sender<DecoderMessage>) {
                             .expect("Failed to send close message to decoder");
                     }
                     WindowEvent::Resized(size) => {
-                        window_ctx.resize(size.to_physical(window_ctx.window().get_hidpi_factor()));
+                        graphics.window_ctx.resize(
+                            size.to_physical(graphics.window_ctx.window().get_hidpi_factor()),
+                        );
                         gfx_window_glutin::update_views(
-                            &window_ctx,
-                            &mut data.out,
-                            &mut main_depth,
+                            &graphics.window_ctx,
+                            &mut graphics.pipe_data.out,
+                            &mut graphics.depth,
                         );
                     }
                     _ => (),
@@ -180,30 +217,34 @@ pub fn init(receiver: Receiver<RgbaImage>, sender: Sender<DecoderMessage>) {
         });
 
         if let Ok(image) = receiver.try_recv() {
-            dimensions = image.dimensions();
-            kind = gfx::texture::Kind::D2(
+            let dimensions = image.dimensions();
+            graphics.kind = gfx::texture::Kind::D2(
                 dimensions.0.try_into().unwrap(),
                 dimensions.1.try_into().unwrap(),
                 gfx::texture::AaMode::Single,
             );
-            let (_, view) = factory
+            let (_, view) = graphics
+                .factory
                 .create_texture_immutable_u8::<ColorFormat>(
-                    kind,
+                    graphics.kind,
                     gfx::texture::Mipmap::Provided,
                     &[&image],
                 )
                 .expect("Failed to create image texture");
-            data.tex.0 = view;
+            graphics.pipe_data.tex.0 = view;
         }
 
         // draw a frame
-        encoder.clear(&data.out, CLEAR_COLOR);
-        encoder
-            .update_buffer(&data.transform, &[TRANSFORM], 0)
+        graphics.encoder.clear(&graphics.pipe_data.out, CLEAR_COLOR);
+        graphics
+            .encoder
+            .update_buffer(&graphics.pipe_data.transform, &[TRANSFORM], 0)
             .expect("Failed to update buffer");
-        encoder.draw(&slice, &pso, &data);
-        encoder.flush(&mut device);
-        window_ctx.swap_buffers().unwrap();
-        device.cleanup();
+        graphics
+            .encoder
+            .draw(&graphics.slice, &graphics.pipe_state, &graphics.pipe_data);
+        graphics.encoder.flush(&mut graphics.device);
+        graphics.window_ctx.swap_buffers().unwrap();
+        graphics.device.cleanup();
     }
 }
