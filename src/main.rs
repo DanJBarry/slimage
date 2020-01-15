@@ -16,9 +16,9 @@ pub fn main() {
     let (decoder_send, decoder_recv) = channel::<DecoderMessage>();
     let (graphics_send, graphics_recv) = channel::<RgbaImage>();
 
-    let gthread = thread::spawn(move || {
-        graphics::init(graphics_recv, decoder_send);
+    let dthread = thread::spawn(move || {
+        decoder::Decoder::init(decoder_recv, graphics_send);
     });
-    decoder::Decoder::init(decoder_recv, graphics_send);
-    gthread.join().expect("Window thread failed");
+    graphics::init(graphics_recv, decoder_send);
+    dthread.join().expect("Decoder thread failed");
 }
